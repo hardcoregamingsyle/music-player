@@ -246,7 +246,7 @@ def build_tray(state):
     def menu_items():
         yield pystray.MenuItem(state.status_text(), None, enabled=False)
         yield pystray.Menu.SEPARATOR
-        yield pystray.MenuItem("Pause / Resume", on_toggle)
+        yield pystray.MenuItem("Pause / Resume", on_toggle, default=True)
         yield pystray.MenuItem("Skip", on_skip)
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Exit", on_exit)

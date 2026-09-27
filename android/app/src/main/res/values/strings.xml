@@ -1,8 +1,9 @@
 <resources>
     <string name="app_name">Music Player</string>
     <string name="btn_pick_folder">Pick additional folder</string>
-    <string name="btn_start">Start playback</string>
-    <string name="btn_stop">Stop playback</string>
+    <string name="btn_play">Play</string>
+    <string name="btn_skip">Skip</string>
+    <string name="btn_stop">Stop</string>
     <string name="btn_sync">Sync now</string>
-    <string name="status_idle">Not playing</string>
+    <string name="status_idle">Not playing.\nTap Play to start shuffling your music.</string>
 </resources>

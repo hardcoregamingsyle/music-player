@@ -1,6 +1,7 @@
 package com.jagat.musicplayer
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import org.json.JSONArray
@@ -15,9 +16,8 @@ import java.net.URLEncoder
 /**
  * Looks for the laptop's LAN broadcast (see desktop/player.py) for a few
  * seconds, and if found, pulls down any .mp3 the phone doesn't have yet.
- * Only runs on Wi-Fi (see the NetworkType.UNMETERED constraint where this is
- * scheduled) so it never touches mobile data, and does nothing at all when
- * the laptop app isn't running/broadcasting.
+ * Does nothing at all when the laptop app isn't running/broadcasting, or
+ * when there's no reachable network (see where this is scheduled).
  */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -41,8 +41,17 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     }
 
     private fun discoverServer(): Pair<String, Int>? {
-        return try {
-            DatagramSocket(null).apply {
+        // Many phones drop incoming Wi-Fi broadcast packets while the screen is
+        // off to save power, which is exactly when this background worker runs.
+        // A short high-perf Wi-Fi lock for just the few-second discovery window
+        // keeps the radio active enough to receive it, without holding it for
+        // the rest of the 15-minute cycle.
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        @Suppress("DEPRECATION")
+        val wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "musicplayer:sync")
+        wifiLock?.acquire()
+        try {
+            return DatagramSocket(null).apply {
                 reuseAddress = true
                 bind(InetSocketAddress(BROADCAST_PORT))
                 soTimeout = DISCOVERY_TIMEOUT_MS
@@ -60,7 +69,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 }
             }
         } catch (e: Exception) {
-            null
+            return null
+        } finally {
+            wifiLock?.release()
         }
     }
 

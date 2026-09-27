@@ -38,11 +38,16 @@ class MusicLibrary(private val context: Context) {
             ?.forEach { tracks.add(Track(it.name, Uri.fromFile(it))) }
 
         pickedFolderUri?.let { treeUri ->
-            val tree = DocumentFile.fromTreeUri(context, treeUri)
-            tree?.listFiles()
-                ?.filter { it.isFile && (it.name ?: "").lowercase().endsWith(".mp3") }
-                ?.sortedBy { it.name }
-                ?.forEach { doc -> tracks.add(Track(doc.name ?: "track", doc.uri)) }
+            try {
+                val tree = DocumentFile.fromTreeUri(context, treeUri)
+                tree?.listFiles()
+                    ?.filter { it.isFile && (it.name ?: "").lowercase().endsWith(".mp3") }
+                    ?.sortedBy { it.name }
+                    ?.forEach { doc -> tracks.add(Track(doc.name ?: "track", doc.uri)) }
+            } catch (e: SecurityException) {
+                // Permission to the picked folder was revoked (e.g. by the OS after
+                // long disuse). Fall back to just the synced folder instead of crashing.
+            }
         }
 
         return tracks

@@ -12,7 +12,6 @@ import android.os.IBinder
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
-import androidx.media.session.MediaButtonReceiver
 
 /**
  * Foreground media-playback service: keeps playing across screen-off / lock
@@ -40,18 +39,23 @@ class PlaybackService : Service() {
                 override fun onPlay() { resumeOrStart() }
                 override fun onPause() { pausePlayback() }
                 override fun onSkipToNext() { playNextTrack() }
-                override fun onStop() { stopSelf() }
+                override fun onStop() { shutdown() }
             })
             isActive = true
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        MediaButtonReceiver.handleIntent(mediaSession, intent)
+        // A foreground service MUST call startForeground() within seconds of being
+        // started, whether or not we actually have anything to play yet -- skipping
+        // this when the library is empty is what was crashing the app on first run
+        // (ForegroundServiceDidNotStartInTimeException).
+        startForeground(NOTIFICATION_ID, buildNotification())
+
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> if (isPaused || mediaPlayer == null) resumeOrStart() else pausePlayback()
             ACTION_SKIP -> playNextTrack()
-            ACTION_STOP -> stopSelf()
+            ACTION_STOP -> shutdown()
             else -> resumeOrStart()
         }
         return START_STICKY
@@ -63,10 +67,11 @@ class PlaybackService : Service() {
             mp.start()
             isPaused = false
             updateSessionState(PlaybackStateCompat.STATE_PLAYING)
-            startForeground(NOTIFICATION_ID, buildNotification())
+            refreshNotification()
         } else if (mp == null) {
             playNextTrack()
         }
+        PlaybackStatus.update(currentTrack?.displayName, playing = mediaPlayer?.isPlaying == true, paused = isPaused)
     }
 
     private fun pausePlayback() {
@@ -75,17 +80,35 @@ class PlaybackService : Service() {
                 it.pause()
                 isPaused = true
                 updateSessionState(PlaybackStateCompat.STATE_PAUSED)
-                startForeground(NOTIFICATION_ID, buildNotification())
+                refreshNotification()
             }
         }
+        PlaybackStatus.update(currentTrack?.displayName, playing = false, paused = isPaused)
+    }
+
+    private fun shutdown() {
+        mediaPlayer?.release()
+        mediaPlayer = null
+        currentTrack = null
+        isPaused = false
+        updateSessionState(PlaybackStateCompat.STATE_STOPPED)
+        PlaybackStatus.update(null, playing = false, paused = false)
+        @Suppress("DEPRECATION")
+        stopForeground(true)
+        stopSelf()
     }
 
     private fun playNextTrack() {
-        val tracks = library.listTracks()
+        val tracks = try {
+            library.listTracks()
+        } catch (e: Exception) {
+            emptyList()
+        }
         if (tracks.isEmpty()) {
+            currentTrack = null
             updateSessionState(PlaybackStateCompat.STATE_STOPPED)
-            @Suppress("DEPRECATION")
-            stopForeground(true)
+            refreshNotification()
+            PlaybackStatus.update(null, playing = false, paused = false, hasTracks = false)
             return
         }
         val choices = if (tracks.size > 1) {
@@ -111,7 +134,8 @@ class PlaybackService : Service() {
             setOnPreparedListener {
                 it.start()
                 updateSessionState(PlaybackStateCompat.STATE_PLAYING)
-                startForeground(NOTIFICATION_ID, buildNotification())
+                refreshNotification()
+                PlaybackStatus.update(currentTrack?.displayName, playing = true, paused = false)
             }
             try {
                 setDataSource(this@PlaybackService, next.uri)
@@ -134,17 +158,28 @@ class PlaybackService : Service() {
         )
     }
 
+    private fun refreshNotification() {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification())
+    }
+
     private fun buildNotification(): Notification {
+        val track = currentTrack
+        val contentText = when {
+            track == null -> "No tracks found yet - pick a folder or sync"
+            isPaused -> "Paused"
+            else -> "Playing"
+        }
         val playPauseIntent = servicePendingIntent(ACTION_PLAY_PAUSE)
         val skipIntent = servicePendingIntent(ACTION_SKIP)
         val stopIntent = servicePendingIntent(ACTION_STOP)
         val playPauseLabel = if (isPaused) "Play" else "Pause"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(currentTrack?.displayName ?: getString(R.string.app_name))
-            .setContentText(if (isPaused) "Paused" else "Playing")
+            .setContentTitle(track?.displayName ?: getString(R.string.app_name))
+            .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_notification)
-            .setOngoing(!isPaused)
+            .setOngoing(track != null && !isPaused)
             .addAction(0, playPauseLabel, playPauseIntent)
             .addAction(0, "Skip", skipIntent)
             .addAction(0, "Stop", stopIntent)
@@ -177,6 +212,7 @@ class PlaybackService : Service() {
         mediaPlayer = null
         mediaSession.isActive = false
         mediaSession.release()
+        PlaybackStatus.update(null, playing = false, paused = false)
         super.onDestroy()
     }
 
