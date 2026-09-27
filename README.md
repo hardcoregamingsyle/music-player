@@ -27,8 +27,16 @@ This produces `desktop/dist/MusicPlayer.exe`. Copy that exe into whatever
 folder holds your `.mp3` files and run it from there — it only looks at the
 folder it's sitting in.
 
-No audio library dependency: playback uses the Windows `winmm` MCI API
-directly via `ctypes`, so there's nothing to compile.
+Playback: each mp3 is decoded to a temp `.wav` via **ffmpeg** (must be
+installed and on `PATH`), then played through the Windows `winmm` MCI
+`waveaudio` device via `ctypes` — no Python audio library needed. This exists
+because MCI can technically open mp3s directly via its `mpegvideo` device,
+but that fails on most real-world mp3s (anything with embedded cover art)
+and can pop up a visible player window since it's a video-capable device;
+`waveaudio` is pure audio with neither problem.
+
+If a track fails to play, check `player_error.log` next to your mp3s (there's
+no console window to print errors to).
 
 ## Android
 
