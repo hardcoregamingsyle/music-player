@@ -1,0 +1,21 @@
+# Desktop (Python / PyInstaller)
+desktop/__pycache__/
+desktop/build/
+desktop/dist/
+desktop/*.spec
+*.pyc
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.iml
+android/.idea/
+*.apk
+*.aab
+
+# Misc
+_test_*.mp3
+*.mp3
+!.gitkeep

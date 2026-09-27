@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Music Player</string>
+    <string name="btn_pick_folder">Pick additional folder</string>
+    <string name="btn_start">Start playback</string>
+    <string name="btn_stop">Stop playback</string>
+    <string name="btn_sync">Sync now</string>
+    <string name="status_idle">Not playing</string>
+</resources>
