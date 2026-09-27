@@ -19,3 +19,5 @@ android/.idea/
 _test_*.mp3
 *.mp3
 !.gitkeep
+player_error.log
+/MusicPlayer.exe

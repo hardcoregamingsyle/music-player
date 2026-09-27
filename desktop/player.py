@@ -13,7 +13,9 @@ import json
 import os
 import random
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,15 +30,24 @@ BROADCAST_PORT = 8722
 BROADCAST_INTERVAL_SEC = 5
 
 # --- MP3 playback via the Windows MCI API (winmm.dll) -----------------------
-# No third-party audio library needed: MCI's "mpegvideo" compound device
-# handles mp3 decoding natively on stock Windows, so this has zero extra
-# dependencies and nothing to compile.
+# Every real .mp3 gets decoded to a temp .wav via ffmpeg first, then played
+# through MCI's "waveaudio" device. Two reasons, found by testing against
+# actual downloaded songs (not just synthetic test tones):
+#   1. MCI's "mpegvideo" device (which can open mp3s directly) chokes on
+#      files with an embedded cover-art picture in their ID3v2 tag -- which
+#      is most real-world mp3s -- with "MCI error 277: initializing MCI".
+#   2. "mpegvideo" is a *video*-capable device class, so it can pop up a
+#      visible player window even for audio-only files. "waveaudio" is pure
+#      audio with no on-screen surface at all, so nothing ever appears.
+# ffmpeg must be installed and on PATH (it already is on this machine).
 
 _winmm = ctypes.WinDLL("winmm")
 _winmm.mciSendStringW.restype = ctypes.c_uint32
 _winmm.mciSendStringW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_void_p]
 _winmm.mciGetErrorStringW.restype = ctypes.c_bool
 _winmm.mciGetErrorStringW.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_uint32]
+
+_TEMP_WAV = os.path.join(tempfile.gettempdir(), "musicplayer_decode.wav")
 
 
 def _mci(command):
@@ -49,8 +60,22 @@ def _mci(command):
     return buf.value
 
 
+def _decode_to_wav(mp3_path, wav_path):
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", mp3_path, wav_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("ffmpeg not found on PATH -- required to decode mp3s") from None
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed on {mp3_path}: {result.stderr.decode(errors='replace')[:300]}")
+
+
 class McuMp3Player:
-    """Thin wrapper around one MCI mp3 device instance."""
+    """Thin wrapper around one MCI waveaudio device instance."""
 
     def __init__(self):
         self._alias = None
@@ -58,9 +83,10 @@ class McuMp3Player:
 
     def load_and_play(self, path):
         self.stop()
+        _decode_to_wav(path, _TEMP_WAV)
         self._counter += 1
         alias = f"track{self._counter}"
-        _mci(f'open "{path}" type mpegvideo alias {alias}')
+        _mci(f'open "{_TEMP_WAV}" type waveaudio alias {alias}')
         _mci(f"play {alias}")
         self._alias = alias
 
@@ -103,6 +129,16 @@ def list_mp3s(folder):
     except OSError:
         names = []
     return names
+
+
+def log_error(folder, message):
+    """Playback errors used to fail silently (no console window to see them
+    in). Write them next to the mp3s instead, so they're actually visible."""
+    try:
+        with open(os.path.join(folder, "player_error.log"), "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except OSError:
+        pass
 
 
 class PlayerState:
@@ -150,7 +186,8 @@ def playback_loop(state):
 
         try:
             state.player.load_and_play(os.path.join(state.folder, track))
-        except RuntimeError:
+        except RuntimeError as e:
+            log_error(state.folder, f"Failed to play '{track}': {e}")
             time.sleep(1)
             continue
 
