@@ -25,10 +25,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Accept SDK licenses
-        run: yes | sdkmanager --licenses > /dev/null || true
+      # ubuntu-latest runners ship a preinstalled Android SDK (ANDROID_HOME)
+      # with common platforms/build-tools and licenses already accepted, so
+      # no separate SDK-install action is needed.
+      - name: Accept SDK licenses (in case of new packages)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - uses: gradle/actions/setup-gradle@v4
         with:
