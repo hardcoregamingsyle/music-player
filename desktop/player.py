@@ -47,7 +47,27 @@ _winmm.mciSendStringW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_u
 _winmm.mciGetErrorStringW.restype = ctypes.c_bool
 _winmm.mciGetErrorStringW.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_uint32]
 
-_TEMP_WAV = os.path.join(tempfile.gettempdir(), "musicplayer_decode.wav")
+_TEMP_DIR = tempfile.gettempdir()
+_TEMP_WAV_PREFIX = "musicplayer_decode_"
+
+
+def _temp_wav_path(n):
+    return os.path.join(_TEMP_DIR, f"{_TEMP_WAV_PREFIX}{n}.wav")
+
+
+def cleanup_stale_temp_wavs():
+    """Best-effort: clear out decode files left behind by a previous run (a
+    crash, a force-kill, Task Manager). Safe to do at startup -- that process
+    is gone, so nothing can still be holding them open."""
+    try:
+        for name in os.listdir(_TEMP_DIR):
+            if name.startswith(_TEMP_WAV_PREFIX) and name.endswith(".wav"):
+                try:
+                    os.remove(os.path.join(_TEMP_DIR, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
 
 def _mci(command):
@@ -75,20 +95,39 @@ def _decode_to_wav(mp3_path, wav_path):
 
 
 class McuMp3Player:
-    """Thin wrapper around one MCI waveaudio device instance."""
+    """Thin wrapper around one MCI waveaudio device instance.
+
+    Each track decodes to its OWN temp .wav filename (not a shared/reused
+    one). Reusing a single filename meant that if MCI's "close" command ever
+    failed to release its file handle (observed in the wild -- rare, but it
+    happens), that filename stayed locked for the rest of the process's
+    life, and every track after that point failed to decode forever. Unique
+    filenames make that failure mode impossible; a small trailing history is
+    still cleaned up so temp files don't accumulate.
+    """
 
     def __init__(self):
         self._alias = None
         self._counter = 0
+        self._wav_history = []
 
     def load_and_play(self, path):
         self.stop()
-        _decode_to_wav(path, _TEMP_WAV)
         self._counter += 1
+        wav_path = _temp_wav_path(self._counter)
+        _decode_to_wav(path, wav_path)
         alias = f"track{self._counter}"
-        _mci(f'open "{_TEMP_WAV}" type waveaudio alias {alias}')
+        _mci(f'open "{wav_path}" type waveaudio alias {alias}')
         _mci(f"play {alias}")
         self._alias = alias
+
+        self._wav_history.append(wav_path)
+        while len(self._wav_history) > 2:
+            stale = self._wav_history.pop(0)
+            try:
+                os.remove(stale)
+            except OSError:
+                pass  # still locked (e.g. a leaked handle) -- harmless, skip it
 
     def is_busy(self):
         if not self._alias:
@@ -340,6 +379,7 @@ def run_broadcaster(stop_event):
 
 
 def main():
+    cleanup_stale_temp_wavs()
     folder = music_dir()
     state = PlayerState(folder)
 
