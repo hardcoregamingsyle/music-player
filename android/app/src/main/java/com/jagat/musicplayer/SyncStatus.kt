@@ -15,6 +15,7 @@ object SyncStatus {
     private const val KEY_LOG = "log"
     private const val KEY_MANUAL_HOST = "manual_host"
     private const val KEY_LAST_GOOD_HOST = "last_good_host"
+    private const val KEY_LAST_AUTO = "last_auto_sync_ms"
     private const val MAX_LINES = 12
 
     @Synchronized
@@ -37,6 +38,22 @@ object SyncStatus {
     fun setManualHost(context: Context, host: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(KEY_MANUAL_HOST, host.trim()).apply()
+    }
+
+    /** True at most once per [minGapMs]; used to auto-sync when the app is opened. */
+    @Synchronized
+    fun claimAutoSync(context: Context, minGapMs: Long): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong(KEY_LAST_AUTO, 0L) < minGapMs) return false
+        prefs.edit().putLong(KEY_LAST_AUTO, now).apply()
+        return true
+    }
+
+    fun versionName(context: Context): String = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+    } catch (e: Exception) {
+        "?"
     }
 
     fun lastGoodHost(context: Context): String =

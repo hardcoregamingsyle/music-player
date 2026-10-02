@@ -13,10 +13,8 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -85,6 +83,12 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         statusHandler.post(statusTick)
+        // The 15-minute background job is best-effort (Doze/battery managers
+        // delay it), so also sync whenever the app is opened, at most every 2 min.
+        if (SyncStatus.claimAutoSync(this, 2 * 60 * 1000L)) {
+            SyncStatus.log(this, "Auto-sync on open")
+            enqueueSyncOnce()
+        }
     }
 
     override fun onPause() {
@@ -109,7 +113,11 @@ class MainActivity : AppCompatActivity() {
         playPauseButton.text = if (PlaybackStatus.isPlaying) "Pause" else "Play"
 
         val log = SyncStatus.readLog(this)
-        if (log.isNotBlank()) syncLog.text = "Sync log:\n$log"
+        if (log.isNotBlank()) {
+            val newestFirst = log.split("\n").reversed().joinToString("\n")
+            val shown = "Sync log (newest first):\n$newestFirst"
+            if (syncLog.text.toString() != shown) syncLog.text = shown
+        }
     }
 
     private fun maybeRequestNotificationPermission() {
@@ -121,16 +129,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // No network constraint on purpose: WorkManager's CONNECTED means "network
+    // with validated internet", so a LAN-only or no-internet Wi-Fi would never
+    // run the job at all. The worker checks for Wi-Fi itself and logs the result.
     private fun schedulePeriodicSync() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .build()
+        val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             SyncWorker.UNIQUE_PERIODIC_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
     }
@@ -138,16 +144,14 @@ class MainActivity : AppCompatActivity() {
     private fun triggerSyncNow() {
         SyncStatus.setManualHost(this, manualHost.text.toString())
         SyncStatus.log(this, "Sync requested")
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setConstraints(constraints)
-            .build()
+        enqueueSyncOnce()
+    }
+
+    private fun enqueueSyncOnce() {
         WorkManager.getInstance(this).enqueueUniqueWork(
             SyncWorker.UNIQUE_ONE_TIME_NAME,
-            ExistingWorkPolicy.REPLACE,
-            request
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<SyncWorker>().build()
         )
     }
 }

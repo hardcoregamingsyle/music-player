@@ -21,3 +21,4 @@ _test_*.mp3
 !.gitkeep
 player_error.log
 /MusicPlayer.exe
+sync.log

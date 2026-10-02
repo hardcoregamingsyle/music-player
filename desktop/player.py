@@ -282,8 +282,20 @@ def build_tray(state):
         state.stop_event.set()
         icon.stop()
 
+    def sync_text():
+        if SYNC_INFO["error"]:
+            return f"Sync ERROR: {SYNC_INFO['error']}"
+        ips = ", ".join(SYNC_INFO["ips"]) or "no network"
+        return f"Sync: listening on {ips}:{HTTP_PORT}"
+
+    def contact_text():
+        last = SYNC_INFO["last_contact"]
+        return f"Phone last seen: {last}" if last else "Phone last seen: never"
+
     def menu_items():
         yield pystray.MenuItem(state.status_text(), None, enabled=False)
+        yield pystray.MenuItem(sync_text(), None, enabled=False)
+        yield pystray.MenuItem(contact_text(), None, enabled=False)
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Pause / Resume", on_toggle, default=True)
         yield pystray.MenuItem("Skip", on_skip)
@@ -300,11 +312,32 @@ def refresh_tray_periodically(icon, state):
         time.sleep(1)
 
 
+# Shared with the tray menu so the laptop side can show whether sync is
+# actually reachable, instead of failing invisibly.
+SYNC_INFO = {"ips": [], "error": None, "last_contact": None}
+
+
+def sync_log(folder, message):
+    try:
+        path = os.path.join(folder, "sync.log")
+        if os.path.exists(path) and os.path.getsize(path) > 200_000:
+            os.remove(path)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except OSError:
+        pass
+
+
 class SyncRequestHandler(BaseHTTPRequestHandler):
     folder = None  # set by make_handler
 
     def log_message(self, fmt, *args):
         pass  # keep this silent/headless
+
+    def log_request(self, code="-", size="-"):
+        client = self.client_address[0]
+        SYNC_INFO["last_contact"] = f"{time.strftime('%H:%M:%S')} from {client}"
+        sync_log(self.folder, f"{client} {self.command} {self.path} -> {code}")
 
     def do_GET(self):
         if self.path == "/manifest":
@@ -355,12 +388,36 @@ def make_handler(folder):
     return Handler
 
 
+class _SyncServer(ThreadingHTTPServer):
+    # On Windows, SO_REUSEADDR lets a second instance bind the same port and
+    # silently shadow the first (a stale copy then answers the phone with an old
+    # song list). Exclusive bind makes the second one fail loudly instead.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def run_sync_server(folder, stop_event):
-    server = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), make_handler(folder))
-    server.timeout = 1
     while not stop_event.is_set():
-        server.handle_request()
-    server.server_close()
+        try:
+            server = _SyncServer(("0.0.0.0", HTTP_PORT), make_handler(folder))
+        except OSError as e:
+            SYNC_INFO["error"] = f"can't listen on port {HTTP_PORT}"
+            log_error(folder, f"Sync server could not bind port {HTTP_PORT}: {e}")
+            stop_event.wait(5)
+            continue
+        SYNC_INFO["error"] = None
+        server.timeout = 1
+        try:
+            while not stop_event.is_set():
+                server.handle_request()
+        except Exception as e:
+            log_error(folder, f"Sync server stopped unexpectedly: {e}")
+        finally:
+            server.server_close()
 
 
 def _local_ipv4s():
@@ -400,11 +457,28 @@ def run_broadcaster(stop_event):
     hostname = socket.gethostname()
     message = f"MUSICSYNC:{HTTP_PORT}:{hostname}".encode("utf-8")
     while not stop_event.is_set():
+        SYNC_INFO["ips"] = sorted(_local_ipv4s())
         _broadcast_once(message)
         stop_event.wait(BROADCAST_INTERVAL_SEC)
 
 
+_single_instance_handle = None  # kept alive for the life of the process
+
+
+def already_running():
+    """A second copy would fight the first over the audio device and the sync
+    port (this caused real trouble with stale copies left behind)."""
+    global _single_instance_handle
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    _single_instance_handle = kernel32.CreateMutexW(None, False, "MusicPlayerTrayApp_single_instance")
+    return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+
+
 def main():
+    if already_running():
+        return
     cleanup_stale_temp_wavs()
     folder = music_dir()
     state = PlayerState(folder)
