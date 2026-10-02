@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -26,6 +27,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var library: MusicLibrary
     private lateinit var statusText: TextView
     private lateinit var playPauseButton: Button
+    private lateinit var manualHost: EditText
+    private lateinit var syncLog: TextView
     private val statusHandler = Handler(Looper.getMainLooper())
     private val statusTick = object : Runnable {
         override fun run() {
@@ -55,6 +58,9 @@ class MainActivity : AppCompatActivity() {
         library = MusicLibrary(this)
         statusText = findViewById(R.id.statusText)
         playPauseButton = findViewById(R.id.playPauseButton)
+        manualHost = findViewById(R.id.manualHost)
+        syncLog = findViewById(R.id.syncLog)
+        manualHost.setText(SyncStatus.manualHost(this))
 
         playPauseButton.setOnClickListener {
             sendServiceAction(PlaybackService.ACTION_PLAY_PAUSE)
@@ -101,6 +107,9 @@ class MainActivity : AppCompatActivity() {
             else -> "Loading:\n$track"
         }
         playPauseButton.text = if (PlaybackStatus.isPlaying) "Pause" else "Play"
+
+        val log = SyncStatus.readLog(this)
+        if (log.isNotBlank()) syncLog.text = "Sync log:\n$log"
     }
 
     private fun maybeRequestNotificationPermission() {
@@ -127,6 +136,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun triggerSyncNow() {
+        SyncStatus.setManualHost(this, manualHost.text.toString())
+        SyncStatus.log(this, "Sync requested")
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -138,6 +149,5 @@ class MainActivity : AppCompatActivity() {
             ExistingWorkPolicy.REPLACE,
             request
         )
-        statusText.text = "Syncing..."
     }
 }

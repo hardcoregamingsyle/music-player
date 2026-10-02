@@ -5,5 +5,7 @@
     <string name="btn_skip">Skip</string>
     <string name="btn_stop">Stop</string>
     <string name="btn_sync">Sync now</string>
+    <string name="hint_laptop_address">Laptop address (optional), e.g. 192.168.29.27</string>
+    <string name="sync_log_empty">Sync log: nothing yet. Tap "Sync now".</string>
     <string name="status_idle">Not playing.\nTap Play to start shuffling your music.</string>
 </resources>

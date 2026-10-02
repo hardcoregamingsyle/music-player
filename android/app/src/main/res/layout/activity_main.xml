@@ -78,6 +78,34 @@
             android:layout_height="wrap_content"
             android:text="@string/btn_sync" />
 
+        <EditText
+            android:id="@+id/manualHost"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:hint="@string/hint_laptop_address"
+            android:inputType="text"
+            android:maxLines="1"
+            android:textSize="14sp" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="2dp">
+
+            <TextView
+                android:id="@+id/syncLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="14dp"
+                android:fontFamily="monospace"
+                android:text="@string/sync_log_empty"
+                android:textSize="12sp" />
+
+        </com.google.android.material.card.MaterialCardView>
+
     </LinearLayout>
 
 </ScrollView>

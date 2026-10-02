@@ -27,7 +27,7 @@ from PIL import Image, ImageDraw
 APP_NAME = "Music Player"
 HTTP_PORT = 8721
 BROADCAST_PORT = 8722
-BROADCAST_INTERVAL_SEC = 5
+BROADCAST_INTERVAL_SEC = 3
 
 # --- MP3 playback via the Windows MCI API (winmm.dll) -----------------------
 # Every real .mp3 gets decoded to a temp .wav via ffmpeg first, then played
@@ -363,19 +363,45 @@ def run_sync_server(folder, stop_event):
     server.server_close()
 
 
+def _local_ipv4s():
+    ips = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith(("127.", "169.254.")):
+                ips.add(ip)
+    except OSError:
+        pass
+    return ips
+
+
+def _broadcast_once(message):
+    """255.255.255.255 on its own only leaves via ONE network adapter (whichever
+    Windows prefers), which is often not the one the phone is on. Send from
+    every local address, to both the limited and the /24 directed broadcast."""
+    targets = [(None, "255.255.255.255")]
+    for ip in _local_ipv4s():
+        targets.append((ip, "255.255.255.255"))
+        targets.append((ip, ip.rsplit(".", 1)[0] + ".255"))
+    for src, dst in targets:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            if src:
+                s.bind((src, 0))
+            s.sendto(message, (dst, BROADCAST_PORT))
+        except OSError:
+            pass
+        finally:
+            s.close()
+
+
 def run_broadcaster(stop_event):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     hostname = socket.gethostname()
     message = f"MUSICSYNC:{HTTP_PORT}:{hostname}".encode("utf-8")
     while not stop_event.is_set():
-        try:
-            sock.sendto(message, ("255.255.255.255", BROADCAST_PORT))
-        except OSError:
-            pass
+        _broadcast_once(message)
         stop_event.wait(BROADCAST_INTERVAL_SEC)
-    sock.close()
 
 
 def main():
